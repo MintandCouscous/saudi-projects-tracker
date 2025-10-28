@@ -72,14 +72,14 @@
     </div>
 
     <p class="text-xs text-gray-500 mt-4">
-      Tip: Replace <code>Contract_Tracker_Template.xlsx</code> in the repo root with your latest Excel and reload.
+      Tip: Replace <code>Contract_Tracker_Filled_From_2025.xlsx</code> in the repo root with your latest Excel and reload.
     </p>
   </div>
 
 <script>
 (async function() {
   // 1) Where your Excel file lives in the repo
-  const EXCEL_PATH = 'Contract_Tracker_Template.xlsx'; // upload this in step 4
+  const EXCEL_PATH = 'Contract_Tracker_Filled_From_2025.xlsx'; // upload this in step 4
 
   // 2) Helpers
   const SAR = new Intl.NumberFormat('en-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 0 });
@@ -243,7 +243,7 @@
     renderKPIs();
     renderTable();
   } catch (e) {
-    alert("Could not load Excel: " + e.message + "\\nMake sure you upload Contract_Tracker_Template.xlsx to the repo root.");
+    alert("Could not load Excel: " + e.message + "\\nMake sure you upload Contract_Tracker_Filled_From_2025.xlsx to the repo root.");
   }
 })();
 </script>
