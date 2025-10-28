@@ -2,43 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Saudi Projects Tracker</title>
+  <title>Saudi Projects Tracker — Interactive Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Tailwind (for quick styling) -->
+  <!-- Tailwind for styling -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Chart.js (for aging chart) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- SheetJS (read Excel in browser) -->
+  <!-- SheetJS to read Google Sheet as XLSX -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Chart.js for visuals -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-50 text-gray-800">
-  <div class="max-w-6xl mx-auto p-6">
-    <h1 class="text-2xl font-semibold mb-4">Saudi Projects Tracker — Dashboard (Excel-powered)</h1>
+  <div class="max-w-7xl mx-auto p-6 space-y-6">
+    <header class="flex items-center justify-between gap-3 flex-wrap">
+      <h1 class="text-2xl font-semibold">Saudi Projects Tracker — Dashboard</h1>
+      <button id="refreshBtn" class="px-3 py-2 rounded bg-black text-white">Refresh</button>
+    </header>
 
-    <!-- Controls -->
-    <div class="grid md:grid-cols-4 gap-3 mb-6">
+    <!-- Filters -->
+    <section class="grid md:grid-cols-5 gap-3">
       <select id="clientFilter" class="bg-white border rounded px-3 py-2">
-        <option value="">Filter by Client</option>
+        <option value="">Client — All</option>
       </select>
       <select id="statusFilter" class="bg-white border rounded px-3 py-2">
-        <option value="">Filter by Status</option>
+        <option value="">Status — All</option>
         <option>RFQ</option>
         <option>Quoted</option>
         <option>Won-PO</option>
-        <option>In-Progress</option>
         <option>Invoiced</option>
-        <option>Partially Paid</option>
         <option>Paid</option>
-        <option>Lost</option>
+        <option>Overdue</option>
       </select>
-      <input id="searchBox" class="bg-white border rounded px-3 py-2" placeholder="Search (ID, project, vendor, PO...)"/>
-      <button id="clearBtn" class="border rounded px-3 py-2">Clear</button>
-    </div>
+      <select id="dateBasis" class="bg-white border rounded px-3 py-2">
+        <option value="offer_sent_date">Filter by: Offer Sent Date</option>
+        <option value="po_date">Filter by: PO Date</option>
+        <option value="invoice_date">Filter by: Invoice Date</option>
+      </select>
+      <input id="dateFrom" type="date" class="bg-white border rounded px-3 py-2" />
+      <input id="dateTo" type="date" class="bg-white border rounded px-3 py-2" />
+    </section>
 
     <!-- KPIs -->
-    <div class="grid md:grid-cols-4 gap-4 mb-6">
+    <section class="grid md:grid-cols-6 gap-4">
       <div class="bg-white rounded-2xl shadow p-4">
-        <div class="text-sm text-gray-500">Total PO</div>
+        <div class="text-sm text-gray-500">Total PO Value</div>
         <div id="kpiPO" class="text-xl font-semibold">–</div>
       </div>
       <div class="bg-white rounded-2xl shadow p-4">
@@ -53,198 +59,462 @@
         <div class="text-sm text-gray-500">Outstanding</div>
         <div id="kpiOut" class="text-xl font-semibold">–</div>
       </div>
-    </div>
+      <div class="bg-white rounded-2xl shadow p-4">
+        <div class="text-sm text-gray-500">POs Needing Follow-up</div>
+        <div id="kpiPOFollow" class="text-xl font-semibold">–</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow p-4">
+        <div class="text-sm text-gray-500">Invoices Needing Follow-up</div>
+        <div id="kpiInvFollow" class="text-xl font-semibold">–</div>
+      </div>
+    </section>
 
-    <!-- Aging chart -->
-    <div class="bg-white rounded-2xl shadow p-4 mb-6">
-      <div class="text-sm text-gray-600 mb-2">Receivables Aging (SAR)</div>
-      <canvas id="agingChart" height="120"></canvas>
-    </div>
+    <!-- Aging -->
+    <section class="bg-white rounded-2xl shadow p-4">
+      <div class="flex items-center justify-between">
+        <div class="text-sm text-gray-600">Receivables Aging (SAR)</div>
+        <div id="lastUpdated" class="text-xs text-gray-500"></div>
+      </div>
+      <canvas id="agingChart" height="110"></canvas>
+    </section>
 
-    <!-- Orders table -->
-    <div class="bg-white rounded-2xl shadow overflow-auto">
+    <!-- Follow-ups -->
+    <section class="grid lg:grid-cols-2 gap-6">
+      <div class="bg-white rounded-2xl shadow p-4 overflow-auto">
+        <div class="text-sm font-medium mb-2">POs needing follow-up (Quoted but no PO after X days)</div>
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-100">
+            <tr id="poFollowHead"></tr>
+          </thead>
+          <tbody id="poFollowBody"></tbody>
+        </table>
+      </div>
+      <div class="bg-white rounded-2xl shadow p-4 overflow-auto">
+        <div class="text-sm font-medium mb-2">Invoices needing follow-up (Outstanding past due)</div>
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-100">
+            <tr id="invFollowHead"></tr>
+          </thead>
+          <tbody id="invFollowBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Main table -->
+    <section class="bg-white rounded-2xl shadow overflow-auto">
       <table class="min-w-full text-sm">
         <thead class="bg-gray-100">
           <tr id="ordersHeader"></tr>
         </thead>
         <tbody id="ordersBody"></tbody>
       </table>
-    </div>
+    </section>
 
-    <p class="text-xs text-gray-500 mt-4">
-      Tip: Replace <code>Contract_Tracker_Filled_From_2025.xlsx</code> in the repo root with your latest Excel and reload.
+    <p class="text-xs text-gray-500">
+      Data source: Google Sheet (Published as XLSX). Change URL in code if you move the sheet.
     </p>
   </div>
 
 <script>
 (async function() {
-  // 1) Where your Excel file lives in the repo
-  const EXCEL_PATH = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRSMr042TGv2lQs-i6IwTwFLdfnmOvOKtSiiVa4wPfzQzhXo411PQBHajm8eqEqjlDZnqa_rvMizjoM/pub?output=xlsx';
-'; // upload this in step 4
+  // ====== 1) CONFIG ======
+  // Your published Google Sheet → "Publish to the web" link, switch to ?output=xlsx
+  const SHEET_XLSX_URL =
+    'https://docs.google.com/spreadsheets/d/e/2PACX-1vRSMr042TGv2lQs-i6IwTwFLdfnmOvOKtSiiVa4wPfzQzhXo411PQBHajm8eqEqjlDZnqa_rvMizjoM/pub?output=xlsx';
 
-  // 2) Helpers
+  // Business rules
+  const CREDIT_DAYS = 30;        // invoice terms (days)
+  const QUOTE_FOLLOWUP_DAYS = 14;// if Offer Sent > X days ago and no PO → follow-up
   const SAR = new Intl.NumberFormat('en-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 0 });
-  const text = (v) => (v == null ? '' : String(v));
-  const num  = (v) => (isNaN(Number(v)) ? 0 : Number(v));
 
-  // 3) Read Excel
-  async function readExcel(path) {
-    const res = await fetch(path, {cache: 'no-store'});
-    if (!res.ok) throw new Error('Excel not found at ' + path);
-    const buf = await res.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array' });
-    const sheetToJSON = (name) => (wb.Sheets[name] ? XLSX.utils.sheet_to_json(wb.Sheets[name], {defval: ''}) : []);
-    return {
-      orders: sheetToJSON('Orders'),
-      invoices: sheetToJSON('Invoices'),
-      clients: sheetToJSON('Clients')
+  // Helpful utils
+  const toStr = v => v == null ? '' : String(v).trim();
+  const toNum = v => {
+    if (v == null || v === '') return 0;
+    const clean = String(v).replace(/[^0-9.\-]/g,'');
+    const n = Number(clean);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const toDate = v => {
+    if (!v && v !== 0) return null;
+    // If XLSX brought it as Date, keep it
+    if (v instanceof Date) return v;
+    const s = String(v).trim();
+    // Try dd/mm/yyyy, yyyy-mm-dd, mm/dd/yyyy
+    const tryParse = (parts, order) => {
+      let [a,b,c] = parts.map(p=>parseInt(p,10));
+      if (order==='dmy') return new Date(c, b-1, a);
+      if (order==='ymd') return new Date(a, b-1, c);
+      if (order==='mdy') return new Date(a, b-1, c);
+      return null;
     };
-  }
-
-  // 4) Render
-  const state = {
-    allOrders: [],
-    invoices: [],
-    clientList: [],
-    filteredOrders: [],
-    chart: null
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return tryParse(s.split('-'),'ymd');
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+      const [p1,p2,p3] = s.split('/');
+      // guess dmy (common in your sheet)
+      return tryParse([p1,p2,p3],'dmy');
+    }
+    // fallback
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  };
+  const fmt = d => !d ? '' : d.toISOString().slice(0,10);
+  const daysSince = d => {
+    if (!d) return null;
+    const ms = Date.now() - d.getTime();
+    return Math.floor(ms / 86400000);
   };
 
-  function applyFilters() {
-    const client = document.getElementById('clientFilter').value;
-    const status = document.getElementById('statusFilter').value;
-    const q = document.getElementById('searchBox').value.trim().toLowerCase();
-
-    state.filteredOrders = state.allOrders.filter(o => {
-      const byClient = client ? text(o['Client Name']) === client : true;
-      const byStatus = status ? text(o['Status']) === status : true;
-      const bySearch = q ? ['Record ID','Project / Description','Location','Third-Party Vendor Name','PO Number']
-        .some(k => text(o[k]).toLowerCase().includes(q)) : true;
-      return byClient && byStatus && bySearch;
-    });
-
-    renderKPIs();
-    renderTable();
+  // ====== 2) Fetch sheet → parse first sheet ======
+  async function fetchWorkbook() {
+    const res = await fetch(SHEET_XLSX_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+    const buf = await res.arrayBuffer();
+    return XLSX.read(buf, { type: 'array' });
   }
 
-  function renderClientFilter() {
-    const sel = document.getElementById('clientFilter');
-    // collect unique clients from sheet
-    const names = Array.from(new Set(state.clientList.map(c => text(c['Client Name']).trim()).filter(Boolean)));
-    names.forEach(n => {
-      const opt = document.createElement('option');
-      opt.value = n; opt.textContent = n;
-      sel.appendChild(opt);
-    });
+  function sheetToJSON(wb, nameOrIdx=0) {
+    const name = typeof nameOrIdx === 'number' ? wb.SheetNames[nameOrIdx] : nameOrIdx;
+    const ws = wb.Sheets[name];
+    return XLSX.utils.sheet_to_json(ws, { defval: '' });
   }
 
-  function renderKPIs() {
-    const totalPO = state.filteredOrders.reduce((a,o)=> a + num(o['PO Value']), 0);
-    const totalInv = state.invoices.reduce((a,i)=> a + num(i['Invoice Amount']), 0);
-    const totalRecv= state.invoices.reduce((a,i)=> a + num(i['Amount Received']), 0);
-    const totalOut = state.invoices.reduce((a,i)=> a + num(i['Balance']), 0);
-    document.getElementById('kpiPO').textContent  = SAR.format(totalPO);
-    document.getElementById('kpiInv').textContent = SAR.format(totalInv);
-    document.getElementById('kpiRecv').textContent= SAR.format(totalRecv);
-    document.getElementById('kpiOut').textContent = SAR.format(totalOut);
+  // ====== 3) Column mapper tuned to your screenshot ======
+  function normalize(s){ return toStr(s).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+  function getCol(map, keys){
+    for (const [norm, orig] of map.entries()){
+      for (const key of keys){
+        const toks = key.split(' ');
+        if (toks.every(t => norm.includes(t))) return orig;
+      }
+    }
+    return null;
+  }
 
-    // Aging buckets from invoices (using "Days Outstanding" & "Payment Status")
-    const buckets = {'0-30':0,'31-60':0,'61-90':0,'>90':0};
-    state.invoices.forEach(i => {
-      const st = text(i['Payment Status']);
-      const bal = num(i['Balance']);
-      const days= num(i['Days Outstanding']);
-      if (!st || st === 'Paid' || bal <= 0) return;
-      if (days <= 30) buckets['0-30'] += bal;
-      else if (days <= 60) buckets['31-60'] += bal;
-      else if (days <= 90) buckets['61-90'] += bal;
-      else buckets['>90'] += bal;
-    });
+  function buildMapping(headers){
+    const map = new Map();
+    headers.forEach(h => map.set(normalize(h), h));
 
-    const ctx = document.getElementById('agingChart').getContext('2d');
-    const data = {
-      labels: Object.keys(buckets),
-      datasets: [{ label: 'Outstanding (SAR)', data: Object.values(buckets) }]
+    return {
+      client:          getCol(map, ['client']),
+      work:            getCol(map, ['nature of work','description','scope']),
+      hamcoOrOther:    getCol(map, ['hamco','other part']),
+      price:           getCol(map, ['price']),
+      rfq_date:        getCol(map, ['date']), // the left "Date" near Price (RFQ/initial)
+      offer_price:     getCol(map, ['offer price']),
+      offer_sent_date: getCol(map, ['offer sent date']),
+      comments:        getCol(map, ['comments','remarks','notes']),
+      po_number:       getCol(map, ['po number','purchase order']),
+      po_value:        getCol(map, ['po value','order value','contract value']),
+      po_date:         getCol(map, ['po date']),
+      invoice_no:      getCol(map, ['invoice']),  // column M in your shot
+      invoice_date:    getCol(map, ['date']),     // the second "Date" (after Invoice) – will disambiguate later
+      invoice_amount:  getCol(map, ['amount']),   // column O
+      payment_note:    getCol(map, ['payment'])   // the green “Payment received...” notes column
     };
-    if (state.chart) state.chart.destroy();
-    state.chart = new Chart(ctx, { type: 'bar', data, options: { plugins: { legend: { display: false } } } });
   }
 
-  function renderTable() {
-    const headerRow = document.getElementById('ordersHeader');
-    const body = document.getElementById('ordersBody');
-    headerRow.innerHTML = '';
-    body.innerHTML = '';
+  // Disambiguate the two “Date” columns by relative position
+  function disambiguateDates(row, headers, map){
+    // If both map.rfq_date and map.invoice_date resolve to same header “Date”,
+    // we’ll pick by neighborhood: invoice_date sits to the right of “Invoice”.
+    const idx = hdr => headers.findIndex(h => h === hdr);
+    const hInvoice = map.invoice_no;
+    const hDate    = map.invoice_date;
 
-    const headers = [
-      "Record ID","RFQ Date","Client Name","Project / Description","Location","Vendor Type",
-      "Third-Party Vendor Name","Quotation No","Quotation Date","Quoted Amount (Vendor)",
-      "Margin %","Final Quote Amount","Selected as Vendor?","PO Number","PO Date",
-      "PO Value","Third-Party Offer Made?","Status"
-    ];
-    headers.forEach(h => {
-      const th = document.createElement('th');
-      th.className = "px-3 py-2 text-left font-medium text-gray-600 whitespace-nowrap";
-      th.textContent = h;
-      headerRow.appendChild(th);
+    if (hInvoice && hDate && hInvoice === hDate){
+      // If same column resolved, try to pick the column immediately to the right of "Invoice"
+      const invIdx = idx(hInvoice);
+      const rightHeader = headers[invIdx+1] || hDate;
+      map.invoice_date = rightHeader;
+      // And keep rfq_date as the left “Date”
+      // If rfq_date also equals that, choose the earliest Date column
+      const dateIndices = headers
+        .map((h,i)=>({h,i}))
+        .filter(x=>normalize(x.h)==='date')
+        .map(x=>x.i);
+      if (dateIndices.length>=2){
+        map.rfq_date = headers[dateIndices[0]];
+        map.invoice_date = headers[dateIndices[1]];
+      }
+    }
+  }
+
+  // ====== 4) Transform rows → enriched model ======
+  function transform(rows){
+    if (!rows.length) return { items: [], clients: [] };
+
+    const headers = Object.keys(rows[0]);
+    const m = buildMapping(headers);
+    disambiguateDates(rows[0], headers, m);
+
+    const items = rows.map((r, i) => {
+      // raw
+      const client    = toStr(r[m.client]);
+      const work      = toStr(r[m.work]);
+      const hamco     = toStr(r[m.hamcoOrOther]);
+      const price     = toNum(r[m.price]);
+      const rfqDate   = toDate(r[m.rfq_date]);
+      const offerPrice= toNum(r[m.offer_price]);
+      const offerSent = toDate(r[m.offer_sent_date]);
+      const comments  = toStr(r[m.comments]);
+      const poNo      = toStr(r[m.po_number]);
+      const poDate    = toDate(r[m.po_date]);
+      const poValue   = toNum(r[m.po_value]);
+      const invNo     = toStr(r[m.invoice_no]);
+      const invDate   = toDate(r[m.invoice_date]);
+      const invAmt    = toNum(r[m.invoice_amount]);
+      const payNote   = toStr(r[m.payment_note]);
+
+      // infer payment received & date from note text (e.g., "Payment received on 20/03/2025")
+      let receivedDate = null;
+      let receivedAmt = 0;
+      if (/payment\s*received/i.test(payNote)){
+        // try dd/mm/yyyy in the note
+        const mdt = payNote.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+        receivedDate = mdt ? toDate(`${mdt[1]}/${mdt[2]}/${mdt[3]}`) : null;
+        receivedAmt = invAmt || 0; // assume full unless different rule desired
+      }
+
+      // status ladder
+      let status = 'RFQ';
+      if (offerSent) status = 'Quoted';
+      if (poNo)      status = 'Won-PO';
+      if (invNo)     status = 'Invoiced';
+      if (receivedDate) status = 'Paid';
+
+      // financials
+      const outstanding = Math.max(0, (invAmt || 0) - (receivedAmt || 0));
+
+      // follow-up logic
+      const today = new Date();
+      const needPOFollow = (status === 'Quoted') && offerSent && daysSince(offerSent) > QUOTE_FOLLOWUP_DAYS && !poNo;
+      const dueDate = invDate ? new Date(invDate.getTime() + CREDIT_DAYS*86400000) : null;
+      const overdue = invNo && !receivedDate && invDate && (today > dueDate);
+      const needInvFollow = overdue && outstanding > 0;
+
+      // which date to use for timeline filter (switchable)
+      const dates = {
+        offer_sent_date: offerSent,
+        po_date: poDate,
+        invoice_date: invDate
+      };
+
+      return {
+        id: `REC-2025-${(i+1).toString().padStart(4,'0')}`,
+        client, work, hamco,
+        price, rfqDate, offerPrice, offerSent,
+        comments,
+        poNo, poDate, poValue,
+        invNo, invDate, invAmt,
+        receivedDate, receivedAmt,
+        outstanding, status,
+        needPOFollow, needInvFollow, overdue, dueDate,
+        dates
+      };
     });
 
-    state.filteredOrders.forEach(o => {
+    // for client dropdown
+    const clients = Array.from(new Set(items.map(x=>x.client).filter(Boolean))).sort();
+
+    return { items, clients };
+  }
+
+  // ====== 5) Rendering ======
+  const el = sel => document.querySelector(sel);
+  const els = sel => Array.from(document.querySelectorAll(sel));
+
+  function fillClientFilter(clients){
+    const sel = el('#clientFilter');
+    sel.innerHTML = '<option value="">Client — All</option>' +
+      clients.map(c=>`<option>${c}</option>`).join('');
+  }
+
+  function kpi(items){
+    const totalPO = items.reduce((a,x)=>a+(x.poValue||0),0);
+    const totalInv = items.reduce((a,x)=>a+(x.invAmt||0),0);
+    const totalRecv= items.reduce((a,x)=>a+(x.receivedAmt||0),0);
+    const totalOut = items.reduce((a,x)=>a+(x.outstanding||0),0);
+    const poFollow = items.filter(x=>x.needPOFollow).length;
+    const invFollow= items.filter(x=>x.needInvFollow).length;
+
+    el('#kpiPO').textContent = SAR.format(totalPO);
+    el('#kpiInv').textContent = SAR.format(totalInv);
+    el('#kpiRecv').textContent= SAR.format(totalRecv);
+    el('#kpiOut').textContent = SAR.format(totalOut);
+    el('#kpiPOFollow').textContent = poFollow;
+    el('#kpiInvFollow').textContent= invFollow;
+  }
+
+  function agingChart(items){
+    const buckets = { '0-30':0, '31-60':0, '61-90':0, '>90':0 };
+    const today = new Date();
+    items.forEach(x=>{
+      if (!x.invNo || x.receivedDate || !x.invDate) return;
+      const age = Math.floor((today - x.invDate)/86400000);
+      if (age<=30) buckets['0-30'] += x.outstanding;
+      else if (age<=60) buckets['31-60'] += x.outstanding;
+      else if (age<=90) buckets['61-90'] += x.outstanding;
+      else buckets['>90'] += x.outstanding;
+    });
+
+    const ctx = el('#agingChart').getContext('2d');
+    if (window.__agingChart) window.__agingChart.destroy();
+    window.__agingChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: Object.keys(buckets),
+        datasets: [{ label: 'Outstanding (SAR)', data: Object.values(buckets) }]
+      },
+      options: { plugins: { legend: { display: false } } }
+    });
+  }
+
+  const ORDERS_HEADERS = [
+    'ID','Client','Nature of Work','Offer Sent','PO No','PO Date','PO Value','Invoice No','Invoice Date','Invoice Amt','Received Date','Outstanding','Status','Comments'
+  ];
+  function renderOrders(items){
+    const th = el('#ordersHeader'); th.innerHTML = '';
+    ORDERS_HEADERS.forEach(h=>{
+      const td = document.createElement('th');
+      td.className = "px-3 py-2 text-left font-medium text-gray-600 whitespace-nowrap";
+      td.textContent = h;
+      th.appendChild(td);
+    });
+
+    const body = el('#ordersBody'); body.innerHTML='';
+    items.forEach(x=>{
       const tr = document.createElement('tr');
       tr.className = "odd:bg-white even:bg-gray-50";
-      function tdText(val, nowrap=true) {
+      const cells = [
+        x.id, x.client, x.work,
+        fmt(x.offerSent),
+        x.poNo, fmt(x.poDate), SAR.format(x.poValue||0),
+        x.invNo, fmt(x.invDate), SAR.format(x.invAmt||0),
+        fmt(x.receivedDate), SAR.format(x.outstanding||0),
+        x.status,
+        x.comments
+      ];
+      cells.forEach((v,i)=>{
         const td = document.createElement('td');
-        td.className = "px-3 py-2" + (nowrap ? " whitespace-nowrap" : "");
-        td.textContent = val;
-        return td;
-      }
-      tr.appendChild(tdText(text(o["Record ID"])));
-      tr.appendChild(tdText(text(o["RFQ Date"])));
-      tr.appendChild(tdText(text(o["Client Name"])));
-      tr.appendChild(tdText(text(o["Project / Description"]), false));
-      tr.appendChild(tdText(text(o["Location"])));
-      tr.appendChild(tdText(text(o["Vendor Type"])));
-      tr.appendChild(tdText(text(o["Third-Party Vendor Name"])));
-      tr.appendChild(tdText(text(o["Quotation No"])));
-      tr.appendChild(tdText(text(o["Quotation Date"])));
-      tr.appendChild(tdText(SAR.format(num(o["Quoted Amount (Vendor)"]))));
-      tr.appendChild(tdText(o["Margin %"] ? (num(o["Margin %"])*100).toFixed(0) + "%" : ""));
-      tr.appendChild(tdText(SAR.format(num(o["Final Quote Amount"]))));
-      tr.appendChild(tdText(text(o["Selected as Vendor?"])));
-      tr.appendChild(tdText(text(o["PO Number"])));
-      tr.appendChild(tdText(text(o["PO Date"])));
-      tr.appendChild(tdText(SAR.format(num(o["PO Value"]))));
-      tr.appendChild(tdText(text(o["Third-Party Offer Made?"])));
-      tr.appendChild(tdText(text(o["Status"])));
+        td.className = "px-3 py-2 whitespace-nowrap";
+        if (i===2) td.className = "px-3 py-2"; // allow wrap for work
+        td.textContent = v || '';
+        tr.appendChild(td);
+      });
       body.appendChild(tr);
     });
   }
 
-  // 5) Load & init
-  try {
-    const {orders, invoices, clients} = await readExcel(EXCEL_PATH);
-    state.allOrders = orders;
-    state.filteredOrders = orders.slice();
-    state.invoices = invoices;
-    state.clientList = clients;
-
-    // populate client filter
-    renderClientFilter();
-    // events
-    document.getElementById('clientFilter').addEventListener('change', applyFilters);
-    document.getElementById('statusFilter').addEventListener('change', applyFilters);
-    document.getElementById('searchBox').addEventListener('input', applyFilters);
-    document.getElementById('clearBtn').addEventListener('click', () => {
-      document.getElementById('clientFilter').value='';
-      document.getElementById('statusFilter').value='';
-      document.getElementById('searchBox').value='';
-      applyFilters();
+  const PO_FOLLOW_HEADERS = ['Client','Work','Offer Sent','Days','Contact/Comments'];
+  function renderPOFollow(items){
+    const th = el('#poFollowHead'); th.innerHTML = '';
+    PO_FOLLOW_HEADERS.forEach(h=>{
+      const td = document.createElement('th');
+      td.className = "px-3 py-2 text-left font-medium text-gray-600 whitespace-nowrap";
+      td.textContent = h;
+      th.appendChild(td);
     });
 
-    renderKPIs();
-    renderTable();
-  } catch (e) {
-    alert("Could not load Excel: " + e.message + "\\nMake sure you upload Contract_Tracker_Filled_From_2025.xlsx to the repo root.");
+    const body = el('#poFollowBody'); body.innerHTML = '';
+    items.forEach(x=>{
+      const tr = document.createElement('tr');
+      tr.className = "odd:bg-white even:bg-gray-50";
+      const d = daysSince(x.offerSent);
+      [x.client, x.work, fmt(x.offerSent), d, x.comments].forEach((v,i)=>{
+        const td = document.createElement('td');
+        td.className = "px-3 py-2" + (i===1 ? "" : " whitespace-nowrap");
+        td.textContent = v || '';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  const INV_FOLLOW_HEADERS = ['Client','Invoice No','Invoice Date','Due Date','Days Overdue','Outstanding'];
+  function renderInvFollow(items){
+    const th = el('#invFollowHead'); th.innerHTML = '';
+    INV_FOLLOW_HEADERS.forEach(h=>{
+      const td = document.createElement('th');
+      td.className = "px-3 py-2 text-left font-medium text-gray-600 whitespace-nowrap";
+      td.textContent = h;
+      th.appendChild(td);
+    });
+
+    const body = el('#invFollowBody'); body.innerHTML = '';
+    const today = new Date();
+    items.forEach(x=>{
+      const over = x.dueDate ? Math.max(0, Math.floor((today - x.dueDate)/86400000)) : '';
+      const cells = [x.client, x.invNo, fmt(x.invDate), fmt(x.dueDate), over, SAR.format(x.outstanding||0)];
+      const tr = document.createElement('tr');
+      tr.className = "odd:bg-white even:bg-gray-50";
+      cells.forEach(v=>{
+        const td = document.createElement('td');
+        td.className = "px-3 py-2 whitespace-nowrap";
+        td.textContent = v || '';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  // ====== 6) Filter pipeline ======
+  function applyFilters(source){
+    const client = el('#clientFilter').value;
+    const status = el('#statusFilter').value;
+    const basis  = el('#dateBasis').value;
+    const f = el('#dateFrom').value ? new Date(el('#dateFrom').value) : null;
+    const t = el('#dateTo').value ? new Date(el('#dateTo').value) : null;
+
+    const inside = d => {
+      if (!d) return (!f && !t);
+      const d0 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      if (f && d0 < f) return false;
+      if (t && d0 > t) return false;
+      return true;
+    };
+
+    let items = source.items.filter(x=>{
+      const passClient = client ? x.client === client : true;
+      const passStatus = status ? x.status === status || (status==='Overdue' && x.overdue) : true;
+      const passDate   = inside(x.dates[basis]);
+      return passClient && passStatus && passDate;
+    });
+
+    // Render
+    kpi(items);
+    agingChart(items);
+    renderOrders(items);
+
+    const poFollow = items.filter(x=>x.needPOFollow);
+    const invFollow= items.filter(x=>x.needInvFollow);
+    renderPOFollow(poFollow);
+    renderInvFollow(invFollow);
+  }
+
+  // ====== 7) Load → render ======
+  async function boot(){
+    const wb = await fetchWorkbook();
+    const rows = sheetToJSON(wb, 0); // first sheet (“Sheet1”)
+    const model = transform(rows);
+
+    fillClientFilter(model.clients);
+    el('#lastUpdated').textContent = `Loaded ${new Date().toLocaleString()}`;
+
+    // initial render (no filters)
+    applyFilters(model);
+
+    // bind
+    ['clientFilter','statusFilter','dateBasis','dateFrom','dateTo'].forEach(id=>{
+      el('#'+id).addEventListener('change', ()=>applyFilters(model));
+      el('#'+id).addEventListener('input',  ()=>applyFilters(model));
+    });
+    el('#refreshBtn').addEventListener('click', boot);
+  }
+
+  try { await boot(); }
+  catch(err){
+    alert('Failed to load Google Sheet. Make sure it is published as XLSX.\n' + err.message);
   }
 })();
 </script>
