@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Saudi Projects Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tailwind (for quick styling) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js (for aging chart) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- SheetJS (read Excel in browser) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800">
+  <div class="max-w-6xl mx-auto p-6">
+    <h1 class="text-2xl font-semibold mb-4">Saudi Projects Tracker — Dashboard (Excel-powered)</h1>
+
+    <!-- Controls -->
+    <div class="grid md:grid-cols-4 gap-3 mb-6">
+      <select id="clientFilter" class="bg-white border rounded px-3 py-2">
+        <option value="">Filter by Client</option>
+      </select>
+      <select id="statusFilter" class="bg-white border rounded px-3 py-2">
+        <option value="">Filter by Status</option>
+        <option>RFQ</option>
+        <option>Quoted</option>
+        <option>Won-PO</option>
+        <option>In-Progress</option>
+        <option>Invoiced</option>
+        <option>Partially Paid</option>
+        <option>Paid</option>
+        <option>Lost</option>
+      </select>
+      <input id="searchBox" class="bg-white border rounded px-3 py-2" placeholder="Search (ID, project, vendor, PO...)"/>
+      <button id="clearBtn" class="border rounded px-3 py-2">Clear</button>
+    </div>
+
+    <!-- KPIs -->
+    <div class="grid md:grid-cols-4 gap-4 mb-6">
+      <div class="bg-white rounded-2xl shadow p-4">
+        <div class="text-sm text-gray-500">Total PO</div>
+        <div id="kpiPO" class="text-xl font-semibold">–</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow p-4">
+        <div class="text-sm text-gray-500">Total Invoiced</div>
+        <div id="kpiInv" class="text-xl font-semibold">–</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow p-4">
+        <div class="text-sm text-gray-500">Total Received</div>
+        <div id="kpiRecv" class="text-xl font-semibold">–</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow p-4">
+        <div class="text-sm text-gray-500">Outstanding</div>
+        <div id="kpiOut" class="text-xl font-semibold">–</div>
+      </div>
+    </div>
+
+    <!-- Aging chart -->
+    <div class="bg-white rounded-2xl shadow p-4 mb-6">
+      <div class="text-sm text-gray-600 mb-2">Receivables Aging (SAR)</div>
+      <canvas id="agingChart" height="120"></canvas>
+    </div>
+
+    <!-- Orders table -->
+    <div class="bg-white rounded-2xl shadow overflow-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr id="ordersHeader"></tr>
+        </thead>
+        <tbody id="ordersBody"></tbody>
+      </table>
+    </div>
+
+    <p class="text-xs text-gray-500 mt-4">
+      Tip: Replace <code>Contract_Tracker_Template.xlsx</code> in the repo root with your latest Excel and reload.
+    </p>
+  </div>
+
+<script>
+(async function() {
+  // 1) Where your Excel file lives in the repo
+  const EXCEL_PATH = 'Contract_Tracker_Template.xlsx'; // upload this in step 4
+
+  // 2) Helpers
+  const SAR = new Intl.NumberFormat('en-SA', { style: 'currency', currency: 'SAR', maximumFractionDigits: 0 });
+  const text = (v) => (v == null ? '' : String(v));
+  const num  = (v) => (isNaN(Number(v)) ? 0 : Number(v));
+
+  // 3) Read Excel
+  async function readExcel(path) {
+    const res = await fetch(path, {cache: 'no-store'});
+    if (!res.ok) throw new Error('Excel not found at ' + path);
+    const buf = await res.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheetToJSON = (name) => (wb.Sheets[name] ? XLSX.utils.sheet_to_json(wb.Sheets[name], {defval: ''}) : []);
+    return {
+      orders: sheetToJSON('Orders'),
+      invoices: sheetToJSON('Invoices'),
+      clients: sheetToJSON('Clients')
+    };
+  }
+
+  // 4) Render
+  const state = {
+    allOrders: [],
+    invoices: [],
+    clientList: [],
+    filteredOrders: [],
+    chart: null
+  };
+
+  function applyFilters() {
+    const client = document.getElementById('clientFilter').value;
+    const status = document.getElementById('statusFilter').value;
+    const q = document.getElementById('searchBox').value.trim().toLowerCase();
+
+    state.filteredOrders = state.allOrders.filter(o => {
+      const byClient = client ? text(o['Client Name']) === client : true;
+      const byStatus = status ? text(o['Status']) === status : true;
+      const bySearch = q ? ['Record ID','Project / Description','Location','Third-Party Vendor Name','PO Number']
+        .some(k => text(o[k]).toLowerCase().includes(q)) : true;
+      return byClient && byStatus && bySearch;
+    });
+
+    renderKPIs();
+    renderTable();
+  }
+
+  function renderClientFilter() {
+    const sel = document.getElementById('clientFilter');
+    // collect unique clients from sheet
+    const names = Array.from(new Set(state.clientList.map(c => text(c['Client Name']).trim()).filter(Boolean)));
+    names.forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n; opt.textContent = n;
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderKPIs() {
+    const totalPO = state.filteredOrders.reduce((a,o)=> a + num(o['PO Value']), 0);
+    const totalInv = state.invoices.reduce((a,i)=> a + num(i['Invoice Amount']), 0);
+    const totalRecv= state.invoices.reduce((a,i)=> a + num(i['Amount Received']), 0);
+    const totalOut = state.invoices.reduce((a,i)=> a + num(i['Balance']), 0);
+    document.getElementById('kpiPO').textContent  = SAR.format(totalPO);
+    document.getElementById('kpiInv').textContent = SAR.format(totalInv);
+    document.getElementById('kpiRecv').textContent= SAR.format(totalRecv);
+    document.getElementById('kpiOut').textContent = SAR.format(totalOut);
+
+    // Aging buckets from invoices (using "Days Outstanding" & "Payment Status")
+    const buckets = {'0-30':0,'31-60':0,'61-90':0,'>90':0};
+    state.invoices.forEach(i => {
+      const st = text(i['Payment Status']);
+      const bal = num(i['Balance']);
+      const days= num(i['Days Outstanding']);
+      if (!st || st === 'Paid' || bal <= 0) return;
+      if (days <= 30) buckets['0-30'] += bal;
+      else if (days <= 60) buckets['31-60'] += bal;
+      else if (days <= 90) buckets['61-90'] += bal;
+      else buckets['>90'] += bal;
+    });
+
+    const ctx = document.getElementById('agingChart').getContext('2d');
+    const data = {
+      labels: Object.keys(buckets),
+      datasets: [{ label: 'Outstanding (SAR)', data: Object.values(buckets) }]
+    };
+    if (state.chart) state.chart.destroy();
+    state.chart = new Chart(ctx, { type: 'bar', data, options: { plugins: { legend: { display: false } } } });
+  }
+
+  function renderTable() {
+    const headerRow = document.getElementById('ordersHeader');
+    const body = document.getElementById('ordersBody');
+    headerRow.innerHTML = '';
+    body.innerHTML = '';
+
+    const headers = [
+      "Record ID","RFQ Date","Client Name","Project / Description","Location","Vendor Type",
+      "Third-Party Vendor Name","Quotation No","Quotation Date","Quoted Amount (Vendor)",
+      "Margin %","Final Quote Amount","Selected as Vendor?","PO Number","PO Date",
+      "PO Value","Third-Party Offer Made?","Status"
+    ];
+    headers.forEach(h => {
+      const th = document.createElement('th');
+      th.className = "px-3 py-2 text-left font-medium text-gray-600 whitespace-nowrap";
+      th.textContent = h;
+      headerRow.appendChild(th);
+    });
+
+    state.filteredOrders.forEach(o => {
+      const tr = document.createElement('tr');
+      tr.className = "odd:bg-white even:bg-gray-50";
+      function tdText(val, nowrap=true) {
+        const td = document.createElement('td');
+        td.className = "px-3 py-2" + (nowrap ? " whitespace-nowrap" : "");
+        td.textContent = val;
+        return td;
+      }
+      tr.appendChild(tdText(text(o["Record ID"])));
+      tr.appendChild(tdText(text(o["RFQ Date"])));
+      tr.appendChild(tdText(text(o["Client Name"])));
+      tr.appendChild(tdText(text(o["Project / Description"]), false));
+      tr.appendChild(tdText(text(o["Location"])));
+      tr.appendChild(tdText(text(o["Vendor Type"])));
+      tr.appendChild(tdText(text(o["Third-Party Vendor Name"])));
+      tr.appendChild(tdText(text(o["Quotation No"])));
+      tr.appendChild(tdText(text(o["Quotation Date"])));
+      tr.appendChild(tdText(SAR.format(num(o["Quoted Amount (Vendor)"]))));
+      tr.appendChild(tdText(o["Margin %"] ? (num(o["Margin %"])*100).toFixed(0) + "%" : ""));
+      tr.appendChild(tdText(SAR.format(num(o["Final Quote Amount"]))));
+      tr.appendChild(tdText(text(o["Selected as Vendor?"])));
+      tr.appendChild(tdText(text(o["PO Number"])));
+      tr.appendChild(tdText(text(o["PO Date"])));
+      tr.appendChild(tdText(SAR.format(num(o["PO Value"]))));
+      tr.appendChild(tdText(text(o["Third-Party Offer Made?"])));
+      tr.appendChild(tdText(text(o["Status"])));
+      body.appendChild(tr);
+    });
+  }
+
+  // 5) Load & init
+  try {
+    const {orders, invoices, clients} = await readExcel(EXCEL_PATH);
+    state.allOrders = orders;
+    state.filteredOrders = orders.slice();
+    state.invoices = invoices;
+    state.clientList = clients;
+
+    // populate client filter
+    renderClientFilter();
+    // events
+    document.getElementById('clientFilter').addEventListener('change', applyFilters);
+    document.getElementById('statusFilter').addEventListener('change', applyFilters);
+    document.getElementById('searchBox').addEventListener('input', applyFilters);
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      document.getElementById('clientFilter').value='';
+      document.getElementById('statusFilter').value='';
+      document.getElementById('searchBox').value='';
+      applyFilters();
+    });
+
+    renderKPIs();
+    renderTable();
+  } catch (e) {
+    alert("Could not load Excel: " + e.message + "\\nMake sure you upload Contract_Tracker_Template.xlsx to the repo root.");
+  }
+})();
+</script>
+</body>
+</html>
